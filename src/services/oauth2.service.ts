@@ -1,3 +1,15 @@
+/**
+ * OAuth 2.0 Client Credentials Flow Implementation
+ * 
+ * Implements secure token management with:
+ * - Distributed locking to prevent concurrent refresh requests
+ * - Redis caching for token reuse across instances
+ * - Automatic token expiry handling with safety buffer
+ * - Thread-safe token refresh across multiple servers
+ * 
+ * @module services/oauth2.service
+ */
+
 import axios, { AxiosInstance } from 'axios';
 import { config } from '../config';
 import { cacheGet, cacheSet, acquireLock, releaseLock } from '../infrastructure/redis';
@@ -5,37 +17,61 @@ import { OAuth2Token, OAuth2TokenResponse } from '../types/oauth.types';
 import { logger } from '../utils/logger';
 import { UnauthorizedError } from '../types/errors';
 
+/** Token expiry buffer in milliseconds (refresh 60s before actual expiry) */
+const TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
+
+/** Retry delay when waiting for another instance to refresh token */
+const REFRESH_RETRY_DELAY_MS = 1000;
+
+/** HTTP timeout for OAuth requests */
+const OAUTH_REQUEST_TIMEOUT_MS = 10000;
+
 /**
- * OAuth2 Client Credentials Flow with Redis caching
- * Implements concurrency-safe token refresh using Redis distributed lock
+ * OAuth 2.0 client for Client Credentials flow.
+ * 
+ * @class OAuth2Client
+ * @description Manages access tokens with distributed locking
+ * to ensure only one server refreshes at a time.
+ * 
+ * @remarks
+ * In a multi-server environment, this prevents the "thundering herd"
+ * problem where all servers refresh tokens simultaneously.
  */
 export class OAuth2Client {
-  private httpClient: AxiosInstance;
+  private readonly httpClient: AxiosInstance;
 
   constructor() {
     this.httpClient = axios.create({
       baseURL: config.oauth.tokenUrl,
-      timeout: 10000,
+      timeout: OAUTH_REQUEST_TIMEOUT_MS,
     });
   }
 
   /**
-   * Get access token (from cache or fetch new)
-   * Thread-safe: Multiple concurrent requests will share the same token
+   * Retrieves a valid access token (from cache or OAuth server).
+   * 
+   * @returns Promise resolving to valid access token string
+   * @throws {UnauthorizedError} If unable to obtain token
+   * 
+   * @remarks
+   * - Checks cache first for existing valid token
+   * - Refreshes if token is expired or missing
+   * - Uses distributed lock to prevent concurrent refreshes
+   * - Thread-safe across multiple server instances
    */
   public async getAccessToken(): Promise<string> {
     try {
-      // Try to get from cache first
+      // Check cache for valid token
       const cachedToken = await this.getTokenFromCache();
       if (cachedToken && !this.isTokenExpired(cachedToken)) {
         logger.debug('Using cached OAuth2 token');
         return cachedToken.accessToken;
       }
 
-      // Token is expired or doesn't exist, need to refresh
+      // Token expired or missing - refresh with distributed lock
       return await this.refreshTokenWithLock();
     } catch (error: any) {
-      logger.error('Failed to get OAuth2 access token', {
+      logger.error('Failed to obtain OAuth2 access token', {
         message: error.message,
         status: error.response?.status,
       });
@@ -44,48 +80,60 @@ export class OAuth2Client {
   }
 
   /**
-   * Refresh token with distributed lock to prevent concurrent refresh requests
-   * Only one instance across all servers will refresh at a time
+   * Refreshes access token using distributed lock pattern.
+   * 
+   * @returns Promise resolving to new access token
+   * @private
+   * 
+   * @remarks
+   * Lock acquisition ensures only ONE server instance refreshes at a time.
+   * If lock is held by another instance:
+   * 1. Wait briefly (1 second)
+   * 2. Check cache for newly refreshed token
+   * 3. Retry lock acquisition if still invalid
+   * 
+   * This prevents N servers making N token requests simultaneously.
    */
   private async refreshTokenWithLock(): Promise<string> {
     const lockKey = config.oauth.tokenLockKey;
     const lockTTL = config.oauth.tokenLockTTL;
 
-    // Try to acquire lock
+    // Attempt to acquire distributed lock
     const lockAcquired = await acquireLock(lockKey, lockTTL);
 
     if (!lockAcquired) {
-      // Another instance is refreshing, wait and retry getting from cache
+      // Another instance is refreshing - wait and retry
       logger.info('Another instance is refreshing token, waiting...');
-      await this.sleep(1000);
+      await this.sleep(REFRESH_RETRY_DELAY_MS);
 
+      // Check if token was refreshed by other instance
       const cachedToken = await this.getTokenFromCache();
       if (cachedToken && !this.isTokenExpired(cachedToken)) {
         return cachedToken.accessToken;
       }
 
-      // Still no valid token, try again (recursive with max retry)
+      // Still no valid token - recursive retry
       return await this.refreshTokenWithLock();
     }
 
     try {
-      // Lock acquired, check cache one more time (double-check pattern)
+      // Lock acquired - double-check cache (another instance may have refreshed)
       const cachedToken = await this.getTokenFromCache();
       if (cachedToken && !this.isTokenExpired(cachedToken)) {
-        logger.info('Token was refreshed by another instance while waiting for lock');
+        logger.info('Token refreshed by another instance during lock acquisition');
         return cachedToken.accessToken;
       }
 
-      // Fetch new token
-      logger.info('Refreshing OAuth2 token');
+      // Fetch new token from OAuth server
+      logger.info('Refreshing OAuth2 token from server');
       const newToken = await this.fetchNewToken();
 
-      // Cache the new token
+      // Cache with TTL
       await this.saveTokenToCache(newToken);
 
       return newToken.accessToken;
     } finally {
-      // Always release the lock
+      // Always release lock (even on error)
       await releaseLock(lockKey);
     }
   }
@@ -133,7 +181,9 @@ export class OAuth2Client {
   }
 
   /**
-   * Get token from Redis cache
+   * Retrieves token from Redis cache.
+   * @returns Promise resolving to cached token or null
+   * @private
    */
   private async getTokenFromCache(): Promise<OAuth2Token | null> {
     const cached = await cacheGet(config.oauth.tokenCacheKey);
@@ -144,38 +194,69 @@ export class OAuth2Client {
     try {
       return JSON.parse(cached) as OAuth2Token;
     } catch (error) {
-      logger.error('Failed to parse cached token', error);
+      logger.error('Failed to parse cached token JSON', { error });
       return null;
     }
   }
 
   /**
-   * Save token to Redis cache with TTL
+   * Saves token to Redis cache with smart TTL.
+   * 
+   * @param token - Token object to cache
+   * @returns Promise that resolves when cached
+   * @private
+   * 
+   * @remarks
+   * TTL is set to token expiry minus 60 seconds to force refresh
+   * before actual expiry (prevents expired token usage).
    */
   private async saveTokenToCache(token: OAuth2Token): Promise<void> {
-    const ttl = token.expiresIn - 60; // Expire 60 seconds before actual expiry
+    // Cache for slightly less than actual expiry to force early refresh
+    const safeTTL = Math.max(token.expiresIn - 60, 0);
+    
     await cacheSet(
       config.oauth.tokenCacheKey,
       JSON.stringify(token),
-      ttl > 0 ? ttl : token.expiresIn
+      safeTTL || token.expiresIn
     );
   }
 
   /**
-   * Check if token is expired (with 60 second buffer)
+   * Checks if token is expired or about to expire.
+   * 
+   * @param token - Token to validate
+   * @returns True if expired or within 60-second buffer
+   * @private
+   * 
+   * @remarks
+   * Uses 60-second safety buffer to prevent race conditions
+   * where token expires during request processing.
    */
   private isTokenExpired(token: OAuth2Token): boolean {
-    const buffer = 60 * 1000; // 60 seconds
-    return Date.now() >= token.expiresAt - buffer;
+    return Date.now() >= token.expiresAt - TOKEN_EXPIRY_BUFFER_MS;
   }
 
   /**
-   * Sleep helper
+   * Promisified sleep utility.
+   * @param ms - Milliseconds to sleep
+   * @returns Promise that resolves after delay
+   * @private
    */
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 
-// Singleton instance
+/**
+ * Singleton OAuth2 client instance.
+ * 
+ * @remarks
+ * Use this exported instance throughout the application
+ * to ensure shared token cache and distributed locking.
+ * 
+ * @example
+ * ```typescript
+ * const token = await oauth2Client.getAccessToken();
+ * ```
+ */
 export const oauth2Client = new OAuth2Client();
