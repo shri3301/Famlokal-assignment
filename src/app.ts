@@ -12,7 +12,11 @@ import { initRedis } from './infrastructure/redis';
 // Import routes
 import productRoutes from './routes/product.routes';
 import webhookRoutes from './routes/webhook.routes';
+import webhookTestRoutes from './routes/webhook.test.routes';
 import healthRoutes from './routes/health.routes';
+import oauthTestRoutes from './routes/oauth.test.routes';
+import oauthMockRoutes from './routes/oauth.mock.routes';
+import externalRoutes from './routes/external.routes';
 
 export class App {
   public app: Application;
@@ -49,6 +53,10 @@ export class App {
     // API routes
     this.app.use(`${apiPrefix}/products`, productRoutes);
     this.app.use(`${apiPrefix}/webhooks`, webhookRoutes);
+    this.app.use(`${apiPrefix}/webhooks`, webhookTestRoutes);
+    this.app.use(`${apiPrefix}/oauth`, oauthTestRoutes);
+    this.app.use(`${apiPrefix}/oauth`, oauthMockRoutes);
+    this.app.use(`${apiPrefix}/external`, externalRoutes);
     
     // 404 handler
     this.app.use('*', (_req: Request, res: Response) => {

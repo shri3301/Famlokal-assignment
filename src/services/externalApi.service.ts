@@ -1,4 +1,4 @@
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, { AxiosInstance } from 'axios';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { ServiceUnavailableError } from '../types/errors';
@@ -46,6 +46,7 @@ export class CircuitBreaker {
    * Execute a function with circuit breaker protection
    */
   public async execute<T>(fn: () => Promise<T>): Promise<T> {
+    void this.timeout;
     if (this.stats.state === CircuitState.OPEN) {
       if (this.shouldAttemptReset()) {
         this.stats.state = CircuitState.HALF_OPEN;
@@ -186,14 +187,34 @@ export class ExternalApiClient {
   }
 
   /**
-   * Example method: Fetch data from external API
-   * TODO: Replace with actual API endpoints
+   * Fetch user data from JSONPlaceholder API (demo external API)
    */
-  public async fetchExternalData(resourceId: string): Promise<any> {
-    logger.info('Fetching external data', { resourceId });
+  public async fetchUser(userId: string): Promise<any> {
+    logger.info('Fetching user from external API', { userId });
     
-    // TODO: Implement actual API call
-    const data = await this.get(`/resource/${resourceId}`);
+    const data = await this.get(`/users/${userId}`);
+    
+    return data;
+  }
+
+  /**
+   * Fetch posts from JSONPlaceholder API (demo external API)
+   */
+  public async fetchPosts(limit: number = 10): Promise<any> {
+    logger.info('Fetching posts from external API', { limit });
+    
+    const data = await this.get('/posts', { _limit: limit });
+    
+    return data;
+  }
+
+  /**
+   * Create a post (demo POST request)
+   */
+  public async createPost(postData: any): Promise<any> {
+    logger.info('Creating post in external API', { postData });
+    
+    const data = await this.post('/posts', postData);
     
     return data;
   }

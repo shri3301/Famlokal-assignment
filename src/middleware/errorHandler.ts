@@ -8,6 +8,8 @@ export const errorHandler = (
   res: Response,
   next: NextFunction
 ): void => {
+  // Keep the 4-arg signature so Express treats this as error middleware.
+  void next;
   let statusCode = 500;
   let message = 'Internal Server Error';
   let isOperational = false;
@@ -37,12 +39,19 @@ export const errorHandler = (
   }
 
   // Send error response
-  res.status(statusCode).json({
+  const response: any = {
     success: false,
     message,
-    ...(process.env.NODE_ENV === 'development' && {
-      stack: err.stack,
-      details: err,
-    }),
-  });
+  };
+
+  // Only include stack trace and details in development mode
+  if (process.env.NODE_ENV === 'development') {
+    response.stack = err.stack;
+    response.details = {
+      statusCode,
+      isOperational,
+    };
+  }
+
+  res.status(statusCode).json(response);
 };

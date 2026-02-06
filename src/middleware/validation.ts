@@ -7,6 +7,7 @@ import { BadRequestError } from '../types/errors';
  */
 export const validate = (validations: ValidationChain[]) => {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    void res;
     // Run all validations
     for (const validation of validations) {
       await validation.run(req);

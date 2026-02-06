@@ -119,6 +119,7 @@ export class ProductService {
    * TODO: Implement proper cursor encoding (e.g., base64 encode timestamp + ID)
    */
   private encodeCursor(product: Product, sortBy: string): string {
+    void sortBy;
     // Placeholder implementation
     return Buffer.from(`${product.id}:${product.createdAt.getTime()}`).toString('base64');
   }

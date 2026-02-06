@@ -8,7 +8,12 @@ const logFormat = printf(({ level, message, timestamp, stack, ...metadata }) => 
   let msg = `${timestamp} [${level}]: ${message}`;
   
   if (Object.keys(metadata).length > 0) {
-    msg += ` ${JSON.stringify(metadata)}`;
+    try {
+      // Safe stringify with circular reference handling
+      msg += ` ${JSON.stringify(metadata, getCircularReplacer())}`;
+    } catch (error) {
+      msg += ` [Unable to stringify metadata]`;
+    }
   }
   
   if (stack) {
@@ -17,6 +22,20 @@ const logFormat = printf(({ level, message, timestamp, stack, ...metadata }) => 
   
   return msg;
 });
+
+// Helper to handle circular references
+const getCircularReplacer = () => {
+  const seen = new WeakSet();
+  return (_key: string, value: any) => {
+    if (typeof value === 'object' && value !== null) {
+      if (seen.has(value)) {
+        return '[Circular]';
+      }
+      seen.add(value);
+    }
+    return value;
+  };
+};
 
 // Create Winston logger
 export const logger = winston.createLogger({

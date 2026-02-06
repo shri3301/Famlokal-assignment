@@ -1,5 +1,4 @@
-import { PoolConnection } from 'mysql2/promise';
-import { query, getConnection } from '../infrastructure/database';
+import { query } from '../infrastructure/database';
 import { Product, ProductListQuery } from '../types/product.types';
 import { logger } from '../utils/logger';
 
@@ -21,17 +20,25 @@ export class ProductRepository {
         maxPrice,
       } = queryParams;
 
+      // Validate and sanitize sortBy and sortOrder to prevent SQL injection
+      const allowedSortFields = ['name', 'price', 'createdAt', 'updatedAt'];
+      const validSortBy = allowedSortFields.includes(sortBy) ? sortBy : 'createdAt';
+      const validSortOrder = (sortOrder?.toLowerCase() === 'asc') ? 'ASC' : 'DESC';
+
       // Build WHERE clause
       const conditions: string[] = [];
       const params: any[] = [];
 
       // Cursor pagination (decode cursor and add condition)
       if (cursor) {
-        // TODO: Decode cursor and extract comparison value
-        // Example: WHERE (created_at, id) < (cursor_timestamp, cursor_id)
         const decodedCursor = this.decodeCursor(cursor);
-        conditions.push(`created_at <= ?`);
-        params.push(decodedCursor.timestamp);
+        logger.debug('Decoded cursor', { cursor, decoded: decodedCursor });
+        // Convert timestamp to MySQL datetime format
+        const cursorDate = new Date(decodedCursor.timestamp);
+        // Use both timestamp and id for proper pagination
+        // This ensures we skip the last item from previous page
+        conditions.push(`(created_at < ? OR (created_at = ? AND id < ?))`);
+        params.push(cursorDate, cursorDate, decodedCursor.id);
       }
 
       // Filter by category
@@ -42,8 +49,8 @@ export class ProductRepository {
 
       // Search in name and description
       if (search) {
-        conditions.push('(name LIKE ? OR description LIKE ?)');
-        params.push(`%${search}%`, `%${search}%`);
+        conditions.push('(name LIKE ? )');
+        params.push(`%${search}%`);
       }
 
       // Price range
@@ -59,7 +66,7 @@ export class ProductRepository {
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
       // Build ORDER BY clause (for cursor pagination)
-      const orderByClause = `ORDER BY ${sortBy} ${sortOrder.toUpperCase()}, id ${sortOrder.toUpperCase()}`;
+      const orderByClause = `ORDER BY ${validSortBy} ${validSortOrder}, id ${validSortOrder}`;
 
       // Fetch limit + 1 to check if there are more results
       const limitClause = `LIMIT ${limit + 1}`;
@@ -120,6 +127,7 @@ export class ProductRepository {
    * TODO: Implement insert logic
    */
   public async create(product: Partial<Product>): Promise<Product> {
+    void product;
     // TODO: Implement INSERT query
     throw new Error('Not implemented');
   }
@@ -129,6 +137,8 @@ export class ProductRepository {
    * TODO: Implement update logic
    */
   public async update(id: string, updates: Partial<Product>): Promise<Product> {
+    void id;
+    void updates;
     // TODO: Implement UPDATE query
     throw new Error('Not implemented');
   }
@@ -138,6 +148,7 @@ export class ProductRepository {
    * TODO: Implement delete logic
    */
   public async delete(id: string): Promise<void> {
+    void id;
     // TODO: Implement DELETE query
     throw new Error('Not implemented');
   }

@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { cacheGet, cacheSet } from '../infrastructure/redis';
 import { config } from '../config';
 import { logger } from '../utils/logger';
-import { BadRequestError, ConflictError } from '../types/errors';
+import { BadRequestError } from '../types/errors';
 import crypto from 'crypto';
 
 export class WebhookController {

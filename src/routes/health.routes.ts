@@ -20,6 +20,7 @@ interface HealthCheckResponse {
  * Health check endpoint for load balancers and monitoring
  */
 router.get('/', async (req: Request, res: Response) => {
+  void req;
   const healthCheck: HealthCheckResponse = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -61,6 +62,7 @@ router.get('/', async (req: Request, res: Response) => {
  * Kubernetes liveness probe
  */
 router.get('/liveness', (req: Request, res: Response) => {
+  void req;
   res.status(200).json({
     status: 'alive',
     timestamp: new Date().toISOString(),
@@ -72,6 +74,7 @@ router.get('/liveness', (req: Request, res: Response) => {
  * Kubernetes readiness probe
  */
 router.get('/readiness', async (req: Request, res: Response) => {
+  void req;
   try {
     // Quick checks for critical dependencies
     const pool = getPool();

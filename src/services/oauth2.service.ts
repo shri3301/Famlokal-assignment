@@ -34,8 +34,11 @@ export class OAuth2Client {
 
       // Token is expired or doesn't exist, need to refresh
       return await this.refreshTokenWithLock();
-    } catch (error) {
-      logger.error('Failed to get OAuth2 access token', error);
+    } catch (error: any) {
+      logger.error('Failed to get OAuth2 access token', {
+        message: error.message,
+        status: error.response?.status,
+      });
       throw new UnauthorizedError('Failed to obtain access token');
     }
   }
@@ -118,8 +121,13 @@ export class OAuth2Client {
       });
 
       return token;
-    } catch (error) {
-      logger.error('Failed to fetch OAuth2 token', error);
+    } catch (error: any) {
+      logger.error('Failed to fetch OAuth2 token', {
+        message: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+      });
       throw error;
     }
   }
