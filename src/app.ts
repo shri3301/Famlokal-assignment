@@ -51,7 +51,7 @@ export class App {
     this.app.use(`${apiPrefix}/webhooks`, webhookRoutes);
     
     // 404 handler
-    this.app.use('*', (req: Request, res: Response) => {
+    this.app.use('*', (_req: Request, res: Response) => {
       res.status(404).json({
         success: false,
         message: 'Route not found',
